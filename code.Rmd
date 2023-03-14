@@ -14,27 +14,12 @@ Some settings
 
 ```{r setup, include=FALSE}
 here::i_am("code.Rmd")
-library(here)
-thematic::thematic_rmd(font = "auto")
-library(dplyr)
-library(tidyr)
-library(ktools)
-knitr::opts_chunk$set(
-    warning = F, message = F, 
-    fig.dim = c(7, 4),
-    out.width = '100%',
-    fig.align = 'center'
-)
+source('~/Documents/libs.r')
 ```
 
 Mexico
 
 ```{r, main_map, include=F}
-library(rnaturalearth)
-library(rnaturalearthdata)
-library(sf)
-sf_use_s2(FALSE)
-
 mex <- ne_countries(scale = 110, type = "map_units", returnclass = "sf", country = "Mexico")
 mexico <- ne_states(country = "Mexico", returnclass = "sf")
 main_states <- char(Campeche, Chiapas, "Quintana Roo", "Yucatán")
@@ -43,38 +28,33 @@ states <- filter(mexico, name_id %in% main_states)
 
 ## CENARPRECE { .tabset}
 
-```{r, readxls, echo=F, include=F}
+```{r readxls, echo=F, include=F}
 # Data raw
-bovine <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/bovine_rabies_2018-20.xlsx"))
-DT::datatable(bovine, caption = 'Bovine')
-animal <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/animal_agressions_2018-2020.xlsx"))
-DT::datatable(animal, caption = 'Animal')
-pep <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/pep_2018-2020.xlsx"))
-DT::datatable(pep, caption = 'PEP')
-h_units <- readxl::read_excel(here("HEALTH_UNITS/ESTABLECIMIENTO_SALUD_202212.xlsx")) %>%
+bovine <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/bovine_rabies_2018-20.xlsx")) |>
+    mutate(across(where(is.character), str_to_lower))
+# DT::datatable(bovine, caption = 'Bovine')
+animal <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/animal_agressions_2018-2020.xlsx")) |>
+    mutate(across(where(is.character), str_to_lower)) |> 
+    rename(ent = state, med = medical_unit)
+# DT::datatable(animal, caption = 'Animal')
+pep <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/pep_2018-2020.xlsx")) |>
+    mutate(across(where(is.character), str_to_lower)) |>
+    rename(ent = state, med = medical_unit)
+# DT::datatable(pep, caption = 'PEP')
+h_units <- readxl::read_excel(here("HEALTH_UNITS/ESTABLECIMIENTO_SALUD_202212.xlsx")) |>
     select(
-        municipality = `NOMBRE DEL MUNICIPIO`,
-        medical_unit = `NOMBRE DE LA UNIDAD`,
+        ent = `NOMBRE DE LA ENTIDAD`,
+        ent_key = `CLAVE DE LA ENTIDAD`,
+        mun = `NOMBRE DEL MUNICIPIO`,
+        mun_key = `CLAVE DEL MUNICIPIO`,
+        loc = `NOMBRE DE LA LOCALIDAD`,
+        loc_key = `CLAVE DE LA LOCALIDAD`,
+        med = `NOMBRE DE LA UNIDAD`,
         lat = `LATITUD`, lon = `LONGITUD`
-    )
-DT::datatable(h_units[1L:500, ], caption = 'Health units')
-```
-
-### Some plots
-
-```{r}
-all3 <- bind_rows(bovine, animal, pep, .id = 'src')
-all3 %>%
-    ggplot(aes(cases, fill = type)) +
-    geom_histogram() +
-    facet_wrap(~src+type, scales = 'free')
-```
-
-```{r}
-all3 %>%
-    ggplot(aes(factor(year), cases, color = type)) +
-    geom_boxplot() +
-    facet_wrap(~ src + type, scales = "free")
+    ) |>
+    filter(stringr::str_to_lower(ent) %in% str_to_lower(main_states)) |>
+    mutate(across(everything(), str_to_lower))
+# DT::datatable(h_units[1L:500, ], caption = 'Health units')
 ```
 
 ### Missing location
