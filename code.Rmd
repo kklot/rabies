@@ -1,10 +1,12 @@
 ---
 title: "Rabies 1"
 author: "Kính"
-output: 
+output:
+  pdf_document:
+    toc: yes
   html_document:
-    toc: true
-    toc_float: true
+    toc: yes
+    toc_float: yes
     code_folding: hide
     theme:
       bootswatch: minty
@@ -24,6 +26,8 @@ mex <- ne_countries(scale = 110, type = "map_units", returnclass = "sf", country
 mexico <- ne_states(country = "Mexico", returnclass = "sf")
 main_states <- char(Campeche, Chiapas, "Quintana Roo", "Yucatán")
 states <- filter(mexico, name_id %in% main_states)
+# https://www.geoboundaries.org/index.html#getdata
+adm2 <- st_read("adm2/geoBoundaries-MEX-ADM2_simplified.shp")
 ```
 
 ## CENARPRECE { .tabset}
@@ -95,71 +99,53 @@ saveRDS(try_ll, here('prep/geocoded.rds'))
 
 ### Fixed location {.active}
 
+ENT and MED are matched but not LOC
+
+- just picked one of them now, obs. can be a wrong LOC!
+- some is not in the three states
+
 ```{r, map_animal, echo = F}
 try_ll <- readRDS(here("prep/geocoded.rds"))
 
-animal %>%
-    left_join(h_units, "medical_unit") %>%
-    mutate(across(c(lat, lon), as.numeric)) %>%
-    left_join(try_ll %>% select(lat2 = lat, long, medical_unit, arcgis_address), "medical_unit") %>%
+anpep <- bind_rows(
+    left_join(animal, h_units, c("ent", "med"), multiple = "first"),
+    left_join(pep, h_units, c("ent", "med"), multiple = "first")
+) |> 
+    mutate(across(c(lat, lon), as.numeric)) |>
+    left_join(
+        select(try_ll, ent, med, mun, loc, lat2 = lat, long, arcgis_address),
+        c("ent", "med", "mun", "loc")
+    ) |> 
     mutate(
         lat = if_else(is.na(lat) & !is.na(lat2), lat2, lat),
         lon = if_else(is.na(lon) & !is.na(long), long, lon),
         fixed = if_else(!is.na(lat2), T, F)
-    ) %>%
-    filter(!is.na(lat)) %>%
-    st_as_sf(coords = c("lon", "lat"), crs = sf::st_crs(4326)) %>%
-    allot(animalZ)
+    ) |>
+    filter(!is.na(lat))
 
-ggplot() +
-    geom_sf(data = mexico) +
-    geom_sf(aes(color = factor(fixed), size = cases, alpha = cases), animalZ) +
-    labs(color = "Fixed missing")
+anpep |>
+    st_as_sf(coords = c("lon", "lat"), crs = sf::st_crs(4326)) |>
+    ggplot() +
+    geom_sf(aes(color = type, size = cases)) +
+    labs(title = 'with err')
 
-ggplot() +
-    geom_sf(data = states) +
-    geom_sf(
-        aes(color = factor(fixed), size = cases, alpha = cases), 
-        data = st_crop(animalZ, states)
-    ) +
-    geom_sf_text(aes(label = name_id), data = states) +
-    labs(title = "Main states", color = "Fixed missing")
+anpep |>
+    filter(lon > -95) |>
+    st_as_sf(coords = c("lon", "lat"), crs = sf::st_crs(4326)) |>
+    ggplot() +
+    geom_sf(aes(color = type, size = cases)) +
+    labs(title = "remove err")
+
+anpep %<>% filter(lon > -95) 
 ```
-
-### Todo - check fixed location
-
-For the moment, ignore those missing. @Ivonne can you check
-
-- if the identified ones are correct (there is address obtained)
-- if the nonidentified ones can be fixed/located (e.g. QRSSA0…)
-
-```{r, print_missing, results = 'asis'}
-DT::datatable(try_ll)
-```
-
----
 
 ## SINAVE pdfs { .tabset}
 
-```{r, eval = FALSE, echo=F}
-# Something like this can be done, but area is not easy to define/different between files.
-library(tabulizer)
-tabel <- extract_tables(
-    here(
-        "SINAVE/Datos-20210914T123636Z-001/Datos/Boletin epi-SINAVE/2010_sem52.pdf"), 
-    pages = c(24), 
-    guess = FALSE,
-    method = "stream",
-    area = list(c(252.9551, 114.4653, 637.6408, 495.1102))
-)
-# Use `tabula` directly is faster. Then read in here
-```
-
 Mordedura read
 
-```{r, echo = F}
-mordedura <- list.files('~/Documents/WIP/Papers/rabies/data/SINAVE/mordedura/', full.names = T) %>%
-    lapply(read.csv) %>%
+```{r mordedura_read, echo = F}
+mordedura <- list.files('~/Documents/WIP/Papers/rabies/data/SINAVE/mordedura/', full.names = T) |>
+    lapply(read.csv) |>
     data.table::rbindlist(idcol = 'src', use.names = FALSE)
 
 cname <- char(
@@ -169,14 +155,14 @@ cname <- char(
     serp_cur_sem, serp_cur_m, serp_cur_f, serp_pre_acum
 )
 
-years <- list.files("~/Documents/WIP/Papers/rabies/data/SINAVE/mordedura/") %>%
-    basename() %>%
+years <- list.files("~/Documents/WIP/Papers/rabies/data/SINAVE/mordedura/") |>
+    basename() %>% 
     gsub(".*(20[0-9]{2}).*", "\\1", .)
 
-mordedura %>%
-    mutate(src = years[src]) %>%
-    rename_with(~cname) %>%
-    pivot_longer(-c(src, loc), names_sep = '_', names_to = char(animal, time, type)) %>%
+mordedura  <-  mordedura |>
+    mutate(src = years[src]) |>
+    rename_with(~cname) |>
+    pivot_longer(-c(src, loc), names_sep = '_', names_to = char(animal, time, type)) |>
     mutate(
         count = gsub('\\s', '', value),
         count = if_else(count == '-', "0", count),
@@ -186,157 +172,490 @@ mordedura %>%
             time == 'cur' ~ src,
             time == 'pre' ~ src - 1,
         )
-    ) %>%
-    allot(mordedura)
-```
-
-> @Ivonne please check randomly some number if the PDF reading is correct.
-
-### Data
-
-```{r, echo = F, results = 'asis'}
-DT::datatable(mordedura)
-```
-
-### Time trend
-
-> Seems something is wrong with 2022 report?
-
-```{r, echo = F}
-dir.create('fig', F)
-mordedura %>%
-    filter(time == "cur", type %in% char(m, f)) %>%
-    group_by(animal, type, year) %>%
-    summarise(n = sum(count)) %>%
-    ggplot() +
-    geom_line(aes(year, n, color = type)) +
-    facet_wrap(~animal, scales = "free_y") +
-    labs(title = 'Bite count time trend', caption = 'from SINAVE pdfs')
-```
-
-```{r, echo = F}
-dir.create('fig', F)
-mordedura %>%
-    filter(time == "cur", type %in% char(m, f)) %>%
-    group_by(loc, animal, type, year) %>%
-    summarise(n = sum(count)) %>%
-    ggplot() +
-    geom_line(aes(year, n, color = factor(loc))) +
-    facet_grid(vars(animal), vars(type), scales = "free_y") +
-    labs(title = "Bite count time trend", caption = "from SINAVE pdfs") +
-    guides(color = "none") +
-    ggrepel::geom_text_repel(
-        aes(year, n, label = loc),
-        data = ~ filter(., year == 2023), 
-        seed = 78
     )
 ```
+
+> Seems something is wrong with 2022 report?
 
 ### Map
 
 ```{r, echo=F}
-mordedura %>%
-    rename(name_id = loc) %>%
-    left_join(mexico %>% select(name_id), "name_id") %>%
-    allot(mordeduraZ)
+mordeduraZ <- mordedura |>
+    rename(name_id = loc) |>
+    left_join(mexico |> select(name_id), "name_id") %>%
+    filter(str_to_lower(name_id) %in% str_to_lower(main_states))
 
-mordeduraZ %>%
-    filter(
-        time == "cur", type == "m", 
-        year %in% c(2009, 2015, 2020, 2023)
-    ) %>%
+nn <- mordeduraZ |>
+    filter(time == "cur", type %in% c("m", "f"), animal != "serp") %>%
+    group_by(name_id, animal) %>%
+    summarise(n = sum(count), n_year = length(unique(year)), n = n / n_year)
+
+mordeduraZ %>% count(year)
+mmm <- states %>%
+    left_join(select(nn, name = name_id, animal, n)) %>%
+    filter(animal == "mami") %>%
     ggplot() +
-        geom_sf(aes(fill = count, geometry = geometry), color = 'grey95') +
-        facet_grid(vars(animal), vars(year)) +
-        labs(title = "Mordedura - M") +
-        scale_fill_viridis_c()
+    geom_sf(aes(fill = n)) +
+    ggrepel::geom_text_repel(
+        aes(label = name, geometry = geometry),
+        size = 3, color = "white",
+        stat = "sf_coordinates",
+        bg.color = "black",
+        bg.r = 0.15,
+        # min.segment.length = 0
+    ) +
+    scale_fill_gradientn(colours = hcl.colors(4, 'Heat 2', rev = T)) +
+    theme(panel.grid = element_blank(), axis.text = element_blank()) +
+    labs(
+        x = "", y = "",
+        fill = "Número medio anual\nde mordeduras", title = "otros mamíferos"
+    )
+prm <- states %>%
+    left_join(select(nn, name = name_id, animal, n)) %>%
+    filter(animal == "perr") %>%
+    ggplot() +
+    geom_sf(aes(fill = n)) +
+    ggrepel::geom_text_repel(
+        aes(label = name, geometry = geometry), 
+        size = 3, color = 'white', 
+        stat = "sf_coordinates",
+        bg.color = "black", 
+        bg.r = 0.15,
+        # min.segment.length = 0
+        ) +
+    scale_fill_viridis_c() +
+    theme(panel.grid = element_blank(), axis.text = element_blank()) +
+    labs(
+        x = "", y = "",
+        fill = "Número medio anual\nde mordeduras", 
+        title = "Perros"
+    )
+mmm+prm
+# ggsave('./fig/sinave.pdf', width = 9, height = 3.5)
 ```
 
-## SIRVENA {.tabset}
+## INEGI
 
-First animal file does not have colnames.
+```{r inegi_var}
+# remotes::install_github("wmgeolab/rgeoboundaries")
+# library(rgeoboundaries)
+lcld <- list.files('/Users/knguyen/Seafile/INEGI/', 'LOCALIDAD', recursive = 1, full.names = 1)
+lcld <- readr::read_csv(lcld, col_select = c(
+    ENT, MUN, LOC, TIPOLOC, ACT_PRIN, TAMLOC
+))
 
-### A data
-```{r, echo = F}
-A <- list.files(here("SIRVERA/SIREVA/"), "SIRVERA_A", recursive = 1, full.names = T) %>%
-    mapply(readxl::read_excel, ., col_names = c(F, T, T), SIMPLIFY = F)
-colnames(A[[1]]) <- colnames(A[[2]])
-A <- bind_rows(A)
-A %<>%
-    select(
-        country = `País de Ocurrencia`,
-        adm1 = `ADM1 de Ocurrencia`,
-        adm2 = `ADM2 de Ocurrencia`,
-        date = `Fecha de la Notificación`,
-        year = `Año`,
-        mon = Mes, 
-        week = Semana,
-        variant = `Variante Antigénica`,
-        tested = `Realizo teste de laboratorio?`,
-        animal = `Especie`,
-        animal_group = `Grupo de Especie`
-    ) %>%
-    filter(country == "México")
-DT::datatable(A, caption = "Animal")
-```
-over time
-```{r, echo=F}
-A %>%
-    filter(animal %in% c("Perro", "Bovino")) %>%
-    group_by(adm1, animal, year) %>%
-    count() %>%
-    ggplot(aes(year, n, color = adm1)) +
-    geom_line() +
-    facet_wrap(~animal, scales = "free_y") +
-    guides(color = "none") +
-    labs(title = "A data - colors by states") +
-    ggrepel::geom_text_repel(aes(label = adm1), ~ filter(., year == 2018), seed = 78)
+itdt <- list.files('/Users/knguyen/Seafile/INEGI/', 'ITER_', recursive = 1, full.names = 1)
+itdt <- readr::read_csv(itdt, col_select = c(
+    ENT = ENTIDAD, NOM_ENT, MUN, NOM_MUN, LOC, NOM_LOC,
+    lon = LONGITUD, lat = LATITUD, pop = POBTOT,
+    VPH_C_SERV, VPH_NDEAED
+)) |>
+    filter(str_detect(NOM_MUN, "Total", T)) |>
+    filter(str_detect(NOM_LOC, "Total", T))
+
+inegi <- itdt |>
+    full_join(lcld, c("ENT", "MUN", "LOC")) |>
+    filter(!is.na(lon), !is.na(lat)) |>
+    mutate(
+        lon = as.numeric(sp::char2dms(lon, "°")),
+        lat = as.numeric(sp::char2dms(lat, "°")),
+        TIPOLOC = if_else(TIPOLOC %in% c('9', '99'), NA_character_, TIPOLOC)
+    )
 ```
 
-### H data
+There are `r inegi |> filter(is.na(lon) | is.na(lat)) |> nrow()` obs. with missing lon or lat.
 
-```{r, echo = F}
-H <- list.files(here("SIRVERA/SIREVA/"), "SIRVERA_H", recursive = 1, full.names = T) %>%
-    lapply(readxl::read_excel) %>%
-    bind_rows() %>%
-    select(
-        country = `País de Ocurrencia`,
-        adm1 = `ADM1 de Ocurrencia`,
-        adm2 = `ADM2 de Ocurrencia`,
-        date_not = `Fecha de Notificación`,
-        date_exp = `Fecha de Exposición`,
-        date_die = `Fecha del Óbito`,
-        year = `Año`,
-        mon = `Mes`,
-        week = `Semana`,
-        age = Edad,
-        country_exp = `País de Exposición`,
-        adm1_exp = `ADM1 de Exposición`,
-        adm2_exp = `ADM2 de Exposición`,
-        year_exp = `Año de Exposición`,
-        mon_exp = `Mes de Exposición`,
-        wek_exp = `Semana de Exposición`,
-        variant = `Variante Antigénica`,
-        tested = `Realizo teste de laboratorio?`,
-        animal = `Especie Transmisora`,
-        animal_group = `Grupo de Especie Transmisora`
-    ) %>%
-    filter(country == "México")
-DT::datatable(H, caption = 'H data')
+```{r label_inegi}
+act_prin_lb <- c(
+    `1` = "Grow/harvest agricultural",
+    `2` = "Animal husbandry",
+    `3` = "Exploitation of mines",
+    `4` = "Cutting/planting trees",
+    `5` = "Gathering wild herbs/plants",
+    `6` = "Fishing/hunting animals",
+    `7` = "Making handicrafts",
+    `8` = "Others",
+    `9` = "Not specified",
+    `NA` = "No information"
+)
+
+tipoloc_lb <- c(
+    `01` = "Ranch/farm",
+    `02` = "Hamlet",
+    `03` = "Traditional illage",
+    `04` = "Industrialised housing",
+    `05` = "Self-produced housing",
+    `06` = "Worker's hostel/camp",
+    `07` = "Commercial/service establishments",
+    `08` = "Industrial zone/park",
+    `09` = "Other",
+    `99` = "Not specified"
+)
+
+act_prin_lb <- c(
+    `1` = "Cultivo o cosecha de productos agrícolas",
+    `2` = "Crianza de animales",
+    `3` = "Explotación de minas",
+    `4` = "Corte o siembra de árboles",
+    `5` = "Recolección de hierbas o plantas silvestres",
+    `6` = "Pesca o caza de animales",
+    `7` = "Elaboración de artesanías",
+    `8` = "Otra actividad económica",
+    `9` = "No especificado",
+    `NA` = "Sin información"
+)
+
+tipoloc_lb <- c(
+    `01` = "Rancho o finca",
+    `02` = "Caserío",
+    `03` = "Poblado tradicional",
+    `04` = "Desarrollo habitacional de vivienda industrializada",
+    `05` = "Barrio, colonia o fraccionamiento de vivienda autoproducida",
+    `06` = "Albergue o campamento de trabajadores",
+    `07` = "Establecimientos comerciales y de servicios",
+    `08` = "Zona o parque industrial",
+    `09` = "Otro tipo",
+    `99` = "No especificado"
+)
 ```
 
-over time
 
-```{r, echo=F}
-H$age %>% hist(breaks = 30)
+### h3 - correlation on hexagon grid of 36km2
 
-H %>%
-    group_by(adm1, year, animal) %>%
-    count() %>%
-    ggplot(aes(year, n, color = adm1)) +
-    geom_line() +
-    facet_wrap(~animal, scales = "free_y") +
-    guides(color = "none") +
-    labs(title = "H data - colors by states") +
-    ggrepel::geom_text_repel(aes(label = adm1), ~ filter(., year == 2018), seed = 78)
+```{r h3_aggregate_dem}
+res <- 6
+inegi$h3 <- geo_to_h3(inegi[, c("lat", "lon")], res)
+
+# find most frequent type in a hexagon
+# if missing get what ever values of the region
+tipo <- inegi |>
+    group_by(h3, TIPOLOC) |>
+    count() |>
+    # fill NA within h3 group
+    ungroup() |>
+    group_by(h3) |>
+    fill(TIPOLOC, .direction = "downup") |>
+    # now get max freq within group
+    ungroup() |>
+    group_by(h3) |>
+    slice_max(n, with_ties = FALSE) |>
+    select(h3, TIPOLOC)
+
+# if missing get what ever values of the region
+actprin <- inegi |>
+    group_by(h3, ACT_PRIN) |>
+    count() |>
+    # fill NA within h3 group
+    ungroup() |>
+    group_by(h3) |>
+    fill(ACT_PRIN, .direction = "downup") |>
+    # now get max freq within group
+    ungroup() |>
+    group_by(h3) |>
+    slice_max(n, with_ties = FALSE) |>
+    select(h3, ACT_PRIN)
+
+# up to 2 hexes/loc -> NA in the aggregated
+inegi |>
+    count(ENT, MUN, LOC, h3) %>%
+    count(n)
+
+pop <- inegi |>
+    group_by(h3) |>
+    # group_by(ENT, MUN, LOC, h3) |>
+    summarise(pop = sum(pop, na.rm = T))
+
+# so let it be, if we have the matched hex, the rate is correct, else we will fill
+# those after joining with cases data
+
+econ <- inegi |>
+    mutate(econ = as.numeric(VPH_C_SERV)) |>
+    group_by(h3) |>
+    summarise(econ = sum(econ, na.rm = T))
+
+statesh3 <- states |> fill_polygon_h3(res)
+stateshex <- statesh3 |> h3_to_geo_boundary_sf() |> rename(h3 = h3_index)
+
+# get rate
+fd <- stateshex |>
+    left_join(tipo) |>
+    left_join(actprin) |>
+    left_join(pop) |>
+    left_join(econ)
+
+fd %<>% mutate(ACT_PRIN = factor(ACT_PRIN))
+```
+
+```{r plot_tm, fig.dim = c(7, 7)}
+tm_shape(fd) +
+    tm_polygons(c("pop", "econ", "TIPOLOC", "ACT_PRIN")) +
+    tm_facets(sync = TRUE, ncol = 2) +
+    tm_style("cobalt")
+```
+
+Only animal and pep are on fine-scale
+
+```{r case_corr}
+anpep$h3 <- geo_to_h3(anpep[, c("lat", "lon")], res)
+
+# count cases
+anpeph3 <- anpep |>
+    group_by(h3, year, type) |>
+    summarise(cases = sum(cases, na.rm = T))
+
+fdc <- fd %>%
+    left_join(anpeph3, multiple = "all")
+
+fdc %>%
+    filter(!is.na(type)) %>%
+    ggplot(aes(cases)) +
+    facet_wrap(~type) +
+    geom_histogram()
+
+fdc %<>% mutate(case = if_else(is.na(cases), 0, cases), lcase = log1p(case))
+
+rawmap <- fdc %>%
+    ggplot() +
+    geom_sf(data = states, color = "grey90", fill = '#0c263a') +
+    geom_sf(aes(fill = case), color = "transparent", linewidth = 0) +
+    scale_fill_gradientn(colors = c('transparent', viridisLite::magma(30, begin = 0.3, direction = 1)), trans = 'log1p') +
+    geom_sf_text(
+        aes(label = name, geometry = geometry), 
+        data = states,
+        size = 3, 
+        stat = "sf_coordinates", 
+        nudge_x = c(1.4, -1.2, 1, 1),
+        nudge_y = c(0, 1, -1, 1.2),
+    ) +
+    theme(
+        legend.key.height = unit(2, 'cm'),
+        legend.position = c(0, .5),
+        panel.grid = element_blank(), axis.text = element_blank()) +
+    labs(
+        x = "", y = "",
+        fill = "Número de casos\n(2020)"
+    )
+# ggsave('./fig/raw_map.pdf', rawmap, width = 7.5, height = 7)
+```
+
+## Some boxes 
+
+```{r boxcorr}
+options(
+    ggplot2.discrete.colour = thematic::okabe_ito()
+    ggplot2.discrete.fill = thematic::okabe_ito()
+)
+
+cols <- gen_colors(okabe, 12)
+
+f1 <- fdc %>%
+    filter(!is.na(type), !is.na(TIPOLOC)) %>%
+    filter(type != "pep") %>%
+    # mutate(act = if_else(act == 9, '8', act)) %>%
+    ggplot() +
+    geom_boxplot(aes(TIPOLOC, cases, fill = TIPOLOC), alpha = .48) +
+    geom_jitter(aes(TIPOLOC, cases, fill = TIPOLOC), position = position_jitter(.1)) +
+    scale_y_continuous(trans = "log1p") +
+    scale_x_discrete(labels = tipoloc_lb) +
+    scale_fill_manual(values = cols[1:5]) +
+    coord_flip() +
+    labs(y = "Incidences (log1p)", x = "Location type") +
+    guides(fill = "none") +
+    theme(strip.background = element_rect("grey95", "grey99"))
+
+f2 <- fdc %>%
+    filter(!is.na(type), !is.na(ACT_PRIN)) %>%
+    filter(type != "pep") %>%
+    mutate(ACT_PRIN = if_else(ACT_PRIN == '9', '8', ACT_PRIN)) %>% 
+    ggplot() +
+    geom_boxplot(aes(ACT_PRIN, cases, fill = ACT_PRIN), alpha = .48) +
+    geom_jitter(aes(ACT_PRIN, cases, fill = ACT_PRIN), position = position_jitter(.1)) +
+    scale_y_continuous(trans = "log1p") +
+    scale_x_discrete(labels = act_prin_lb) +
+    scale_fill_manual(values = cols[6:12]) +
+    coord_flip() +
+    labs(y = 'Incidences (log1p)', x = "Activity type") +
+    guides(fill = 'none') +
+    theme(strip.background = element_rect('grey95', 'grey99'))
+f1/f2 + plot_layout(height = c(.42, .58))
+
+# ggsave('./fig/inc_act_tipo.pdf', width = 9, height = 6)
+```
+
+
+## Zero-inflated model
+
+```{r smooth}
+library(INLA)
+idt <- filter(fdc, type != "pep", !is.na(pop)) %>% mutate(idx = 1:n())
+nrow(idt)
+
+result = inla(
+    cases ~ 1 + TIPOLOC + ACT_PRIN + factor(year) + f(idx),
+    family = "zeroinflatedpoisson1",
+    control.predictor = list(link = 1),
+    control.compute = list(config = TRUE),
+    data = idt
+)
+
+summary(result)
+
+bind_rows(
+    result$summary.fixed,
+    result$summary.hyperpar
+) %>%
+    rownames_to_column %>%
+        mutate(rowname = case_when(
+            rowname == "TIPOLOC02" ~ tipoloc_lb[2],
+            rowname == "TIPOLOC03" ~ tipoloc_lb[3],
+            rowname == "TIPOLOC05" ~ tipoloc_lb[5],
+            rowname == "TIPOLOC07" ~ tipoloc_lb[7],
+            rowname == "ACT_PRIN2" ~ act_prin_lb[2],
+            rowname == "ACT_PRIN3" ~ act_prin_lb[3],
+            rowname == "ACT_PRIN4" ~ act_prin_lb[4],
+            rowname == "ACT_PRIN5" ~ act_prin_lb[5],
+            rowname == "ACT_PRIN6" ~ act_prin_lb[6],
+            rowname == "ACT_PRIN7" ~ act_prin_lb[7],
+            rowname == "ACT_PRIN8" ~ act_prin_lb[8],
+            rowname == "ACT_PRIN9" ~ act_prin_lb[9],
+            rowname == "factor(year)2019" ~ "2019 vs 2018",
+            rowname == "factor(year)2020" ~ "2020 vs 2018",
+            rowname == "zero-probability parameter for zero-inflated poisson_1" ~ "zero",
+            rowname == "Precision for idx" ~ "prec"
+        )) %>%
+        filter(rowname != "zero") %>%
+        filter(rowname != "prec") %>%
+        filter(!is.na(rowname)) %>%
+        mutate(type = c(
+            rep('Tipo de actividad (ref: agricultura)', 4), 
+            rep('Tipo de localidad (ref: rancho o finca)', 7), 
+            rep('Año', 2))) %>% 
+        allot(tmpm)
+
+p1 <- 
+tmpm %>%
+    ggplot(aes(rowname, `0.5quant`, color = type)) +
+    geom_hline(yintercept = 0, linetype = 'dotted', color = 'grey50') +
+    geom_linerange(aes(ymin = `0.025quant`, ymax = `0.975quant`)) +
+    geom_point(shape = 21, fill = "white", size = 2) +
+    facet_wrap(~type, 3, scales = 'free_y', ) +
+    labs(
+        x = '', y = 'Estimaciones de parámetros\ne intervalo de confianza de 95%',
+        # title = "Zeroinflated Negative Binomial Type I",
+        # caption = 'Complete-case regression without spatial correlation'
+    ) +
+    theme(
+        legend.position = "none", 
+        axis.title.x = element_text(size = 9),
+        panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank()
+    ) +
+    coord_cartesian(xlim = c(0, 100)) +
+    coord_flip()
+    
+p1
+load_all("~/Code/R/ktools")
+lo <- p1 %>% facet_unwrap(plot = F)
+lo[[2]]$labels$y <- lo[[1]]$labels$y <- ""
+lo[[2]] / lo[[1]] / lo[[3]] + plot_layout(heights = c(.6, .4, .2), guides = 'collect')
+ggsave('./fig/simple_model.pdf', width = 7, height = 4.5)
+```
+
+OK, if get all these filled for all hexagons maybe we can predict a little.
+
+### Test k-ring smooth of covariates
+
+```{r kring_smooth_tipo}
+tipo <- kring_smooth(fdc, "h3", "TIPOLOC", 3)
+fdc$tipo <- tipo
+
+lm <- scale_color_manual(
+    values = thematic::okabe_ito(10),
+    limits = unique(fdc$TIPOLOC)
+)
+bf <- ggplot(fdc, aes(fill = TIPOLOC)) +
+    geom_sf() +
+    lm +
+    labs(title = "Before k-ring smoothing")
+at <- ggplot(fdc, aes(fill = tipo)) +
+    geom_sf() +
+    lm +
+    labs(title = "After k-ring smoothing")
+bf + at
+```
+
+```{r kring_smooth_act}
+fdc %<>% mutate(ACT_PRIN = as.character(ACT_PRIN))
+actprin <- kring_smooth(fdc, "h3", "ACT_PRIN", 4)
+fdc$actprin <-actprin 
+
+lm <- scale_color_manual(
+    values = thematic::okabe_ito(10),
+    limits = unique(fdc$actprin )
+)
+bf <- ggplot(fdc, aes(fill =actprin )) +
+    geom_sf() +
+    lm +
+    labs(title = "Before k-ring smoothing")
+at <- ggplot(fdc, aes(fill =actprin )) +
+    geom_sf() +
+    lm +
+    labs(title = "After k-ring smoothing")
+bf + at
+```
+
+```{r inla_smooth, cache=TRUE, eval = FALSE}
+idt <- fdc %>%
+    filter(type != "pep") %>%
+    # drop_na(any_of(char(tipo, actprin, idd))) %>% 
+    mutate(idd = as_numeric(h3), idx = 1:n())
+nrow(idt)
+
+H <- spdep::poly2nb(idt, queen = T)
+spdep::nb2INLA("hex.adj", H)
+graph <- inla.read.graph("hex.adj")
+
+fml <- cases ~ 1 +
+    tipo + actprin + 
+    # factor(year) + 
+    f(idx) +
+    f(idd,
+        model = "besag", 
+        constr = T, scale.model = T, 
+        graph = graph
+    )
+
+result1 = inla(fml,
+    family = "zeroinflatedpoisson1",
+    data = idt,
+    control.inla = list(int.strategy = 'eb'),
+    control.predictor = list(link = 1)
+)
+
+# idt$fitted <- result1$summary.fitted.values$`0.5quant`
+idt$fitted <- result1$summary.fitted.values$mean
+
+idt %>%
+    ggplot(aes(cases, fitted)) +
+    geom_point()
+
+idt %>%
+    ggplot(aes(fill = fitted)) +
+    geom_sf() +
+    geom_sf(data = states, fill = "transparent", color = 'white', inherit.aes = F) +
+    scale_fill_viridis_c(trans = "log") +
+    labs(
+        title = "Smoothed estimated of all region",
+        subtitle = "Use spatial correlation but not covariates"
+    ) +
+    theme(panel.grid = element_blank())
+idt %>%
+    ggplot(aes(fill = cases)) +
+    geom_sf() +
+    geom_sf(data = states, fill = "transparent", color = 'white', inherit.aes = F) +
+    scale_fill_viridis_c(trans = "log") +
+    labs(
+        title = "Original data",
+        subtitle = "Use spatial correlation but not covariates"
+    ) +
+    theme(panel.grid = element_blank())
 ```
