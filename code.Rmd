@@ -500,10 +500,37 @@ result = inla(
 
 summary(result)
 
-bind_rows(
-    result$summary.fixed,
-    result$summary.hyperpar
-) %>%
+# result$misc$configs$contents 
+sp <- INLA::inla.posterior.sample(1000, result)
+
+fun = function(...) {
+    c(
+        i0 = exp(Intercept),
+        TIPOLOC02 = (1 - theta[1]) * exp(Intercept + TIPOLOC02),
+        TIPOLOC03 = (1 - theta[1]) * exp(Intercept + TIPOLOC03),
+        TIPOLOC05 = (1 - theta[1]) * exp(Intercept + TIPOLOC05),
+        TIPOLOC07 = (1 - theta[1]) * exp(Intercept + TIPOLOC07),
+        ACT_PRIN2 = (1 - theta[1]) * exp(Intercept + ACT_PRIN2),
+        ACT_PRIN3 = (1 - theta[1]) * exp(Intercept + ACT_PRIN3),
+        ACT_PRIN4 = (1 - theta[1]) * exp(Intercept + ACT_PRIN4),
+        ACT_PRIN5 = (1 - theta[1]) * exp(Intercept + ACT_PRIN5),
+        ACT_PRIN6 = (1 - theta[1]) * exp(Intercept + ACT_PRIN6),
+        ACT_PRIN7 = (1 - theta[1]) * exp(Intercept + ACT_PRIN7),
+        ACT_PRIN8 = (1 - theta[1]) * exp(Intercept + ACT_PRIN8),
+        ACT_PRIN9 = (1 - theta[1]) * exp(Intercept + ACT_PRIN9),
+        y2019 = exp(Intercept + `factor(year)2019`),
+        y2202 = exp(Intercept + `factor(year)2020`)
+    )
+}
+f2 = inla.posterior.sample.eval(fun, sp)
+
+f2 %>%
+    apply(1, \(x) quantile(x, probs = c(.5, .025, .975))) %>%
+    as.data.frame() %>%
+    rownames_to_column() %>%
+    pivot_longer(-rowname) %>%
+    pivot_wider(names_from = rowname, values_from = value) %>%
+    rename(rowname = name) %>% 
     rownames_to_column %>%
         mutate(rowname = case_when(
             rowname == "TIPOLOC02" ~ tipoloc_lb[2],
@@ -549,10 +576,7 @@ tmpm %>%
         axis.title.x = element_text(size = 9),
         panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank()
     ) +
-    coord_cartesian(xlim = c(0, 100)) +
     coord_flip()
-    
-p1
 load_all("~/Code/R/ktools")
 lo <- p1 %>% facet_unwrap(plot = F)
 lo[[2]]$labels$y <- lo[[1]]$labels$y <- ""
