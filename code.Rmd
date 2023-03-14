@@ -62,24 +62,16 @@ h_units <- readxl::read_excel(here("HEALTH_UNITS/ESTABLECIMIENTO_SALUD_202212.xl
 Merge and filter those without lat and lon, then search with `osm`.
 
 ```{r, echo = FALSE}
-animal %>%
-    left_join(h_units, 'medical_unit')%>%
-    filter(is.na(lat)) %>%
-    count(medical_unit) %>%
-    allot(missing_ll)
-pep %>%
-    left_join(h_units, "medical_unit") %>%
-    filter(is.na(lat)) %>%
-    count(medical_unit) %>%
-    bind_rows(missing_ll) %>%
-    distinct(medical_unit) %>%
-    allot(missing_ll)
-```
-
-List of places missing include
-
-```{r, results = 'asis'}
-DT::datatable(missing_ll)
+missing_ll <- animal |>
+    left_join(h_units, c('ent', 'med'), multiple = 'all')|>
+    filter(is.na(lat)) |>
+    count(ent, med, mun, loc)
+missing_ll <- pep |>
+    left_join(h_units, c('ent', 'med'), multiple = 'all') |>
+    filter(is.na(lat)) |>
+    count(ent, med, mun, loc)
+    bind_rows(missing_ll) |>
+    distinct()
 ```
 
 ```{r, arg_gis, eval = FALSE, echo = F}
@@ -87,14 +79,17 @@ DT::datatable(missing_ll)
 dir.create('prep')
 library(tidygeocoder)
 try_ll <- missing_ll %>%
-    mutate(medical_unit = paste0(medical_unit, ", Mexico")) %>%
+    mutate(
+        medx = if_else(is.na(loc), med, paste(med, ', ', loc)),
+        medx = if_else(is.na(mun), medx, paste(medx, ', ', mun)),
+        medx = paste0(medx, ', ', ent, ', ', 'mexico'),
+        medx = stringr::str_squish(medx)
+    ) |> 
     geocode(
-        address = medical_unit,
+        address = medx,
         method = "arcgis",
         full_results = TRUE
     )
-# forgot to rmove
-try_ll %<>% mutate(medical_unit = gsub(', Mexico', '', medical_unit))
 saveRDS(try_ll, here('prep/geocoded.rds'))
 ```
 
