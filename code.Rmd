@@ -36,9 +36,7 @@ myo %>%
     geom_sf(aes(color = type, size = cases))
 ```
 
-## SINAVE pdfs { .tabset}
-
-Mordedura read
+## SINAVE pdfs
 
 ```{r mordedura_read, echo = F}
 mordedura <- list.files('~/Documents/WIP/Papers/rabies/data/SINAVE/mordedura/', full.names = T) |>
@@ -79,7 +77,7 @@ mordedura  <-  mordedura |>
 ```{r, echo=F}
 mordeduraZ <- mordedura |>
     rename(name_id = loc) |>
-    left_join(mexico |> select(name_id), "name_id") %>%
+    left_join(mexico |> dplyr::select(name_id), "name_id") %>%
     filter(str_to_lower(name_id) %in% str_to_lower(main_states))
 
 nn <- mordeduraZ |>
@@ -87,9 +85,8 @@ nn <- mordeduraZ |>
     group_by(name_id, animal) %>%
     summarise(n = sum(count), n_year = length(unique(year)), n = n / n_year)
 
-mordeduraZ %>% count(year)
 mmm <- states %>%
-    left_join(select(nn, name = name_id, animal, n)) %>%
+    left_join(dplyr::select(nn, name = name_id, animal, n)) %>%
     filter(animal == "mami") %>%
     ggplot() +
     geom_sf(aes(fill = n)) +
@@ -108,7 +105,7 @@ mmm <- states %>%
         fill = "Número medio anual\nde mordeduras", title = "otros mamíferos"
     )
 prm <- states %>%
-    left_join(select(nn, name = name_id, animal, n)) %>%
+    left_join(dplyr::select(nn, name = name_id, animal, n)) %>%
     filter(animal == "perr") %>%
     ggplot() +
     geom_sf(aes(fill = n)) +
@@ -127,6 +124,7 @@ prm <- states %>%
         fill = "Número medio anual\nde mordeduras", 
         title = "Perros"
     )
+library(patchwork)
 mmm+prm
 # ggsave('./fig/sinave.pdf', width = 9, height = 3.5)
 ```
