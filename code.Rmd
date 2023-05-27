@@ -245,6 +245,32 @@ newer AGEB version than 2016? or there is something amiss in the LOC's coding?
 
 ### h3 - correlation on hexagon grid of 36km2
 
+```{r eval=F}
+library(h3)
+library(leaflet)
+myo$h3 <- geo_to_h3(myo[, c('LATITUD', 'LONGITUD')], 6)
+inegiP <- inegi %>% left_join(ageb)
+tmp <- inegiP %>% 
+    filter(ENT == '07') %>% 
+    mutate(TIPOLOC = factor(TIPOLOC)) %>% 
+    filter(!st_is_empty(geometry)) %>% 
+    st_as_sf()
+ring1 <- myo %>% filter(state == 'chiapas') %>% pull(h3) %>% sapply(h3::hex_ring, simplify = F) %>% unlist %>% h3_to_geo_boundary_sf
+pal <- colorFactor(hcl.colors(10), domain = tmp$TIPOLOC)
+chiapasll <- leaflet() %>% 
+addProviderTiles("CartoDB.Positron") %>% 
+addPolygons(data = ring1, color = 'green', fillOpacity = 0.1) %>%  # hex solution
+addPolygons(data = tmp, color = ~pal(TIPOLOC)) %>%
+addLegend(data = tmp, "bottomright", pal = pal, values = ~TIPOLOC,
+    title = "TIPOLOC",
+    labFormat = labelFormat(prefix = ""),
+    opacity = 1
+) %>% # ageb 
+addMarkers(data = myo[myo$state == 'chiapas', ]) # health units
+
+library(htmlwidgets)
+saveWidget(chiapasll, file=here("fig/chiapasll.html"))
+```
 ```{r h3_aggregate_dem}
 res <- 6
 inegi$h3 <- geo_to_h3(inegi[, c("lat", "lon")], res)
