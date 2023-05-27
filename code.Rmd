@@ -132,14 +132,12 @@ mmm+prm
 ## INEGI
 
 ```{r inegi_var}
-# remotes::install_github("wmgeolab/rgeoboundaries")
-# library(rgeoboundaries)
 lcld <- list.files('/Users/knguyen/Seafile/INEGI/', 'LOCALIDAD', recursive = 1, full.names = 1)
 lcld <- readr::read_csv(lcld, col_select = c(
     ENT, MUN, LOC, TIPOLOC, ACT_PRIN, TAMLOC
 ))
 
-itdt <- list.files('/Users/knguyen/Seafile/INEGI/', 'ITER_', recursive = 1, full.names = 1)
+itdt <- list.files('/Users/knguyen/Seafile/INEGI', 'ITER_.*\\.csv$', recursive = 1, full.names = 1)
 itdt <- readr::read_csv(itdt, col_select = c(
     ENT = ENTIDAD, NOM_ENT, MUN, NOM_MUN, LOC, NOM_LOC,
     lon = LONGITUD, lat = LATITUD, pop = POBTOT,
@@ -149,16 +147,12 @@ itdt <- readr::read_csv(itdt, col_select = c(
     filter(str_detect(NOM_LOC, "Total", T))
 
 inegi <- itdt |>
-    full_join(lcld, c("ENT", "MUN", "LOC")) |>
-    filter(!is.na(lon), !is.na(lat)) |>
-    mutate(
-        lon = as.numeric(sp::char2dms(lon, "°")),
-        lat = as.numeric(sp::char2dms(lat, "°")),
-        TIPOLOC = if_else(TIPOLOC %in% c('9', '99'), NA_character_, TIPOLOC)
-    )
+    full_join(lcld, c("ENT", "MUN", "LOC")) %>% 
+    distinct()
 ```
 
-There are `r inegi |> filter(is.na(lon) | is.na(lat)) |> nrow()` obs. with missing lon or lat.
+There are `r inegi |> filter(is.na(lon) | is.na(lat)) |> nrow()` obs. with
+missing lon or lat.
 
 ```{r label_inegi}
 act_prin_lb <- c(
