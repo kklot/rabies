@@ -1,142 +1,39 @@
 ---
 title: "Rabies 1"
 author: "Kính"
-output:
-  pdf_document:
-    toc: yes
-  html_document:
-    toc: yes
-    toc_float: yes
-    code_folding: hide
-    theme:
-      bootswatch: minty
 ---
-
-Some settings
-
-```{r setup, include=FALSE}
-here::i_am("code.Rmd")
-source('~/Documents/libs.r')
-```
 
 Mexico
 
 ```{r, main_map, include=F}
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(ktools)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(here)
+sf_use_s2(FALSE)
+
 mex <- ne_countries(scale = 110, type = "map_units", returnclass = "sf", country = "Mexico")
 mexico <- ne_states(country = "Mexico", returnclass = "sf")
 main_states <- char(Campeche, Chiapas, "Quintana Roo", "Yucatán")
 states <- filter(mexico, name_id %in% main_states)
-# https://www.geoboundaries.org/index.html#getdata
-adm2 <- st_read("adm2/geoBoundaries-MEX-ADM2_simplified.shp")
 ```
 
-## CENARPRECE { .tabset}
+### Fixed location
 
-```{r readxls, echo=F, include=F}
-# Data raw
-bovine <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/bovine_rabies_2018-20.xlsx")) |>
-    mutate(across(where(is.character), str_to_lower))
-# DT::datatable(bovine, caption = 'Bovine')
-animal <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/animal_agressions_2018-2020.xlsx")) |>
-    mutate(across(where(is.character), str_to_lower)) |> 
-    rename(ent = state, med = medical_unit)
-# DT::datatable(animal, caption = 'Animal')
-pep <- readxl::read_excel(here("CENAPRECE/Data/Aggregated_clean/pep_2018-2020.xlsx")) |>
-    mutate(across(where(is.character), str_to_lower)) |>
-    rename(ent = state, med = medical_unit)
-# DT::datatable(pep, caption = 'PEP')
-h_units <- readxl::read_excel(here("HEALTH_UNITS/ESTABLECIMIENTO_SALUD_202212.xlsx")) |>
-    select(
-        ent = `NOMBRE DE LA ENTIDAD`,
-        ent_key = `CLAVE DE LA ENTIDAD`,
-        mun = `NOMBRE DEL MUNICIPIO`,
-        mun_key = `CLAVE DEL MUNICIPIO`,
-        loc = `NOMBRE DE LA LOCALIDAD`,
-        loc_key = `CLAVE DE LA LOCALIDAD`,
-        med = `NOMBRE DE LA UNIDAD`,
-        lat = `LATITUD`, lon = `LONGITUD`
-    ) |>
-    filter(stringr::str_to_lower(ent) %in% str_to_lower(main_states)) |>
-    mutate(across(everything(), str_to_lower))
-# DT::datatable(h_units[1L:500, ], caption = 'Health units')
-```
-
-### Missing location
-
-Merge and filter those without lat and lon, then search with `osm`.
-
-```{r, echo = FALSE}
-missing_ll <- animal |>
-    left_join(h_units, c('ent', 'med'), multiple = 'all')|>
-    filter(is.na(lat)) |>
-    count(ent, med, mun, loc)
-missing_ll <- pep |>
-    left_join(h_units, c('ent', 'med'), multiple = 'all') |>
-    filter(is.na(lat)) |>
-    count(ent, med, mun, loc)
-    bind_rows(missing_ll) |>
-    distinct()
-```
-
-```{r, arg_gis, eval = FALSE, echo = F}
-# This run before compile output as it's a long running process.
-dir.create('prep')
-library(tidygeocoder)
-try_ll <- missing_ll %>%
-    mutate(
-        medx = if_else(is.na(loc), med, paste(med, ', ', loc)),
-        medx = if_else(is.na(mun), medx, paste(medx, ', ', mun)),
-        medx = paste0(medx, ', ', ent, ', ', 'mexico'),
-        medx = stringr::str_squish(medx)
-    ) |> 
-    geocode(
-        address = medx,
-        method = "arcgis",
-        full_results = TRUE
-    )
-saveRDS(try_ll, here('prep/geocoded.rds'))
-```
-
-### Fixed location {.active}
-
-ENT and MED are matched but not LOC
-
-- just picked one of them now, obs. can be a wrong LOC!
-- some is not in the three states
-
-```{r, map_animal, echo = F}
-try_ll <- readRDS(here("prep/geocoded.rds"))
-
-anpep <- bind_rows(
-    left_join(animal, h_units, c("ent", "med"), multiple = "first"),
-    left_join(pep, h_units, c("ent", "med"), multiple = "first")
-) |> 
-    mutate(across(c(lat, lon), as.numeric)) |>
-    left_join(
-        select(try_ll, ent, med, mun, loc, lat2 = lat, long, arcgis_address),
-        c("ent", "med", "mun", "loc")
-    ) |> 
-    mutate(
-        lat = if_else(is.na(lat) & !is.na(lat2), lat2, lat),
-        lon = if_else(is.na(lon) & !is.na(long), long, lon),
-        fixed = if_else(!is.na(lat2), T, F)
-    ) |>
-    filter(!is.na(lat))
-
-anpep |>
-    st_as_sf(coords = c("lon", "lat"), crs = sf::st_crs(4326)) |>
+```{r}
+myo <- readxl::read_excel(here("../Myo Chit/final_animal_agressions_2018-2020_MC_20230502.xlsx")) %>% 
+    mutate(lon = as.numeric(LONGITUD), lat = as.numeric(LATITUD)) %>% 
+    filter(!is.na(lon)) %>% 
+    filter(!is.na(lat)) %>% 
+    st_as_sf(coords = c("lon", "lat"), crs = sf::st_crs(4326))
+    
+myo %>%
     ggplot() +
-    geom_sf(aes(color = type, size = cases)) +
-    labs(title = 'with err')
-
-anpep |>
-    filter(lon > -95) |>
-    st_as_sf(coords = c("lon", "lat"), crs = sf::st_crs(4326)) |>
-    ggplot() +
-    geom_sf(aes(color = type, size = cases)) +
-    labs(title = "remove err")
-
-anpep %<>% filter(lon > -95) 
+    geom_sf(aes(color = type, size = cases))
 ```
 
 ## SINAVE pdfs { .tabset}
