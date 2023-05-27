@@ -208,6 +208,40 @@ tipoloc_lb <- c(
 )
 ```
 
+### AGEB shape file
+
+Merge all the AGEB from the four states, further joined the localidads with the
+same code but multiple shapes. A little slow, read the save file in
+`data/ageb.shp` instead.
+
+```{r, eval = FALSE}
+a <- sf::st_read("../INEGI/Datos_AGEB/702825218720_s/conjunto de datos/07l.shp") %>% 
+    select(ENT = CVE_ENT, MUN = CVE_MUN, LOC = CVE_LOC, NOMLOC, UR = TIPO)
+b <- sf::st_read("../INEGI/Datos_AGEB/702825218713_s/conjunto de datos/04l.shp") %>% 
+    select(ENT = CVE_ENT, MUN = CVE_MUN, LOC = CVE_LOC, NOMLOC, UR = TIPO)
+c <- sf::st_read("../INEGI/Datos_AGEB/702825218904_s/conjunto de datos/23l.shp") %>% 
+    select(ENT = CVE_ENT, MUN = CVE_MUN, LOC = CVE_LOC, NOMLOC, UR = TIPO)
+d <- sf::st_read("../INEGI/Datos_AGEB/702825218980_s/conjunto de datos/31l.shp") %>% 
+    select(ENT = CVE_ENT, MUN = CVE_MUN, LOC = CVE_LOC, NOMLOC, UR = TIPO)
+
+ageb <- bind_rows(a, b, c, d)
+# multiple tiny area with the same LOC
+ageb <- ageb %>% group_by(ENT, MUN, LOC, NOMLOC, UR) %>% summarise(geometry = st_union(geometry))
+sf::st_write(ageb, "data/ageb.shp")
+```
+
+```{r}
+ageb <- sf::st_read("data/ageb.shp")
+ageb <- sf::st_transform(ageb, 4326)
+```
+
+The minimum localidad size is `r min(sf::st_area(ageb))` which is much larger
+than a 36km^2 hexagon. 
+
+The issue is why there are `r length(inegi$LOC[which(inegi$LOC %notin%
+ageb$LOC)])` localidads exists in INEGI data but not the AGEB map. Is it because
+the AGEB most up to date version is 2016 and the data is newer? Are there a
+newer AGEB version than 2016? or there is something amiss in the LOC's coding?
 
 ### h3 - correlation on hexagon grid of 36km2
 
